@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0866e9">
+  <title>Szkło witrażowe</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Szkło witrażowe</h1>
+    <button id="backupBtn" class="icon-btn" aria-label="Kopia zapasowa" title="Kopia zapasowa">⚙</button>
+  </header>
+
+  <main>
+    <label class="search-wrap">
+      <span aria-hidden="true">⌕</span>
+      <input id="search" type="search" placeholder="Szukaj w opisach…" autocomplete="off">
+    </label>
+    <div id="empty" class="empty">
+      <div class="empty-icon">◇</div>
+      <h2>Twoja kolekcja szkła</h2>
+      <p>Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.</p>
+      <button class="primary" id="emptyAdd">＋ Dodaj szkło</button>
+    </div>
+    <section id="grid" class="grid" aria-label="Katalog szkła"></section>
+  </main>
+
+  <button id="addBtn" class="fab" aria-label="Dodaj szkło">＋</button>
+
+  <dialog id="itemDialog">
+    <form id="itemForm" method="dialog">
+      <div class="dialog-head">
+        <button type="button" class="text-btn" id="cancelBtn">Anuluj</button>
+        <strong id="dialogTitle">Dodaj szkło</strong>
+        <button type="submit" class="save-btn">Zapisz</button>
+      </div>
+      <div class="form-body">
+        <label class="photo-picker" for="photoInput">
+          <img id="photoPreview" alt="Podgląd zdjęcia szkła" hidden>
+          <div id="photoPlaceholder">
+            <span class="camera">▣</span>
+            <strong>Dodaj zdjęcie</strong>
+            <span>Zrób zdjęcie lub wybierz z galerii</span>
+          </div>
+        </label>
+        <input id="photoInput" type="file" accept="image/*" capture="environment" hidden>
+        <label class="field-label" for="description">Opis</label>
+        <textarea id="description" rows="5" placeholder="Wpisz opis szkła…" required maxlength="2000"></textarea>
+        <p class="hint">Możesz wpisać nazwę, kolor, fakturę lub inne informacje.</p>
+        <button type="button" id="removePhotoBtn" class="secondary" hidden>Usuń wybrane zdjęcie</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detailDialog">
+    <div class="dialog-head">
+      <button type="button" class="text-btn" id="detailBack">‹ Wróć</button>
+      <strong>Szkło</strong>
+      <button type="button" class="delete-btn" id="deleteBtn" aria-label="Usuń wpis">Usuń</button>
+    </div>
+    <div class="detail-body">
+      <img id="detailPhoto" class="detail-photo" alt="Zdjęcie szkła">
+      <h2>Opis</h2>
+      <p id="detailDescription" class="detail-description"></p>
+      <p id="detailDate" class="date"></p>
+      <button type="button" id="changePhotoBtn" class="secondary">▧ Zmień zdjęcie</button>
+      <button type="button" id="editBtn" class="primary">✎ Edytuj opis</button>
+    </div>
+  </dialog>
+
+  <dialog id="backupDialog">
+    <div class="dialog-head">
+      <button type="button" class="text-btn" id="backupClose">Zamknij</button>
+      <strong>Kopia zapasowa</strong>
+      <span></span>
+    </div>
+    <div class="backup-body">
+      <p>Wpisy są przechowywane lokalnie w tej przeglądarce na tym urządzeniu. Wyeksportuj kopię, aby zabezpieczyć zdjęcia i opisy.</p>
+      <button id="exportBtn" class="primary">Eksportuj kopię</button>
+      <label class="secondary import-label">Importuj kopię JSON
+        <input id="importInput" type="file" accept="application/json,.json" hidden>
+      </label>
+      <p class="hint">Ważne: wyczyszczenie danych Safari lub usunięcie aplikacji może skasować lokalną kolekcję. Rób kopię zapasową.</p>
+    </div>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "Szkło witrażowe",
+  "short_name": "Szkło",
+  "description": "Prywatny katalog zdjęć szkła witrażowego",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7f8fb",
+  "theme_color": "#0866e9",
+  "icons": []
+}
