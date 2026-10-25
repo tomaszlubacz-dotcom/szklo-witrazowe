@@ -10,6 +10,9 @@ const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_-svgIsvfUfKwj1JBVX-k2Q_4Jl6AXUs
 const ADMIN_EMAIL = 'tomaszlubacz@icloud.com';
 const CLOUD_BUCKET = 'witraz-zdjecia';
 let cloud = null, cloudUser = null, cloudBusy = false, lastCloudSync = 0;
+let publicItems = [];
+let publicLoadError = '';
+let sessionChecked = false;
 if (window.supabase?.createClient) cloud = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
 function cloudStatus(message) { const el = $('cloudStatus'); if (el) el.textContent = 'Supabase: ' + message; }
@@ -103,10 +106,46 @@ async function syncCloudToLocal() {
   cloudStatus(`gotowe: ${downloaded} pobrano, ${skipped} już aktualnych; razem ${rows?.length || 0} w chmurze.`);
 }
 
+async function loadPublicCatalog() {
+  if (!cloud || cloudUser) return;
+  publicLoadError = '';
+  const {data, error} = await cloud.from('witraz_items')
+    .select('local_id,kind,title,description,image_url,created_at')
+    .not('local_id','is',null).order('created_at',{ascending:false}).limit(1000);
+  if (error) {
+    publicLoadError = error.message;
+    publicItems = [];
+    cloudStatus('błąd odczytu publicznego: ' + error.message);
+  } else {
+    publicItems = (data || []).filter(x=>x.image_url).map(x=>({
+      id: String(x.local_id), kind: x.kind === 'gallery' ? 'gallery' : 'glass',
+      description: x.description || x.title || '', photo: x.image_url,
+      createdAt: timestampMs(x.created_at)
+    }));
+    cloudStatus('tryb przeglądania: ' + publicItems.length + ' pozycji.');
+  }
+  render();
+}
+function isAdmin() { return !!cloudUser; }
+function updateAccessUI() {
+  const admin = isAdmin();
+  $('addBtn').hidden = !admin;
+  $('emptyAdd').hidden = !admin;
+  $('editBtn').hidden = !admin;
+  $('changePhotoBtn').hidden = !admin;
+  $('deleteBtn').hidden = !admin;
+  $('exportBtn').hidden = !admin;
+  $('importInput').closest('label').hidden = !admin;
+  $('cloudEmail').hidden = admin;
+  $('cloudPassword').hidden = admin;
+  document.querySelectorAll('label[for="cloudEmail"],label[for="cloudPassword"]').forEach(el=>el.hidden=admin);
+  render();
+}
 function cloudControls() {
   $('cloudLoginBtn').hidden = !!cloudUser;
   $('cloudLogoutBtn').hidden = !cloudUser;
   $('cloudSyncBtn').hidden = !cloudUser;
+  updateAccessUI();
 }
 async function runCloudSync() {
   if (!cloud || !cloudUser || cloudBusy || !db) return;
@@ -126,18 +165,20 @@ async function runCloudSync() {
   }
 }
 async function restoreCloudSession() {
-  if (!cloud || !db) return;
+  if (!cloud || !db) { sessionChecked = true; updateAccessUI(); return; }
   try {
     const {data: {session}, error} = await cloud.auth.getSession();
-    if (error || !session) { cloudControls(); return; }
+    if (error || !session) { cloudUser=null; sessionChecked=true; cloudControls(); await loadPublicCatalog(); return; }
     const {data, error: userError} = await cloud.auth.getUser();
     if (userError || data.user?.email?.toLowerCase() !== ADMIN_EMAIL) {
-      cloudUser = null; cloudControls(); return;
+      cloudUser = null; sessionChecked=true; cloudControls(); await loadPublicCatalog(); return;
     }
     cloudUser = data.user;
+    sessionChecked=true;
+    items=await allItems();
     cloudControls();
     await runCloudSync();
-  } catch(err) { cloudStatus('błąd: ' + (err.message || 'nieznany')); }
+  } catch(err) { cloudUser=null; sessionChecked=true; cloudControls(); await loadPublicCatalog(); cloudStatus('błąd sesji: ' + (err.message || 'nieznany')); }
 }
 async function cloudLoginAndSync() {
   if (!cloud) throw new Error('Nie załadowała się biblioteka Supabase. Odśwież stronę.');
@@ -150,6 +191,7 @@ async function cloudLoginAndSync() {
   cloudUser = data.user;
   if (cloudUser.email?.toLowerCase() !== ADMIN_EMAIL) { await cloud.auth.signOut(); cloudUser=null; throw new Error('To nie jest konto administratora.'); }
   $('cloudPassword').value='';
+  items=await allItems();
   cloudControls();
   // Merge by stable local_id and updated_at; older local copies do not overwrite newer cloud records.
   await runCloudSync();
@@ -195,19 +237,20 @@ function toast(message) {
 function shortText(text) { return text.length > 95 ? text.slice(0,92)+'…' : text; }
 function render() {
   const q = $('search').value.trim().toLocaleLowerCase('pl');
-  const filtered = items.filter(x => (x.kind || 'glass') === activeView && String(x.description || '').toLocaleLowerCase('pl').includes(q));
+  const visibleItems = cloudUser ? items : publicItems;
+  const filtered = visibleItems.filter(x => (x.kind || 'glass') === activeView && String(x.description || '').toLocaleLowerCase('pl').includes(q));
   grid.replaceChildren();
   empty.hidden = filtered.length > 0;
   grid.hidden = filtered.length === 0;
-  const hasItemsInView = items.some(x => (x.kind || 'glass') === activeView);
+  const hasItemsInView = visibleItems.some(x => (x.kind || 'glass') === activeView);
   if (filtered.length === 0 && hasItemsInView && q) {
     empty.hidden = false; $('emptyTitle').textContent = 'Brak wyników';
     $('emptyText').textContent = 'Spróbuj wpisać inne słowo.'; $('emptyAdd').hidden = true;
   } else {
     $('emptyTitle').textContent = activeView === 'gallery' ? 'Galeria gotowych witraży' : 'Twoja kolekcja szkła';
-    $('emptyText').textContent = activeView === 'gallery' ? 'Dodaj zdjęcia ukończonych witraży, aby stworzyć własną galerię.' : 'Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.';
+    $('emptyText').textContent = publicLoadError ? 'Nie udało się pobrać katalogu. Spróbuj odświeżyć stronę.' : (!cloudUser ? 'Brak udostępnionych pozycji.' : (activeView === 'gallery' ? 'Dodaj zdjęcia ukończonych witraży, aby stworzyć własną galerię.' : 'Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.'));
     $('emptyAdd').textContent = activeView === 'gallery' ? '＋ Dodaj witraż' : '＋ Dodaj szkło';
-    $('emptyAdd').hidden = false;
+    $('emptyAdd').hidden = !cloudUser;
   }
   filtered.forEach(item => {
     const card = document.createElement('article'); card.className='card'; card.tabIndex=0;
@@ -230,6 +273,7 @@ function setPhotoPreview(data) {
   $('photoPlaceholder').hidden=true; $('removePhotoBtn').hidden=false;
 }
 function openEditor(id=null) {
+  if (!cloudUser) { toast('Dodawanie i edycja wymagają logowania administratora.'); return; }
   editingId=id; pendingPhoto=null;
   $('itemForm').reset(); resetPhotoPreview();
   const item=id ? items.find(x=>x.id===id) : null;
@@ -285,6 +329,7 @@ $('photoInput').addEventListener('change',async e=>{
 $('removePhotoBtn').addEventListener('click',()=>{pendingPhoto=null;resetPhotoPreview();});
 $('itemForm').addEventListener('submit',async e=>{
   e.preventDefault();
+  if (!cloudUser) { toast('Wymagane logowanie administratora.'); return; }
   const description=$('description').value.trim();
   if(!description){toast(activeView === 'gallery' ? 'Wpisz opis witrażu.' : 'Wpisz opis szkła.');return;}
   if(!pendingPhoto){toast(activeView === 'gallery' ? 'Dodaj zdjęcie witrażu.' : 'Dodaj zdjęcie szkła.');return;}
@@ -302,7 +347,7 @@ document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>
 $('emptyAdd').addEventListener('click',()=>openEditor());
 $('search').addEventListener('input',render);
 function showDetail(id) {
-  const item=items.find(x=>x.id===id); if(!item)return;
+  const item=(cloudUser ? items : publicItems).find(x=>x.id===id); if(!item)return;
   activeId=id; $('detailPhoto').src=item.photo; $('detailDescription').textContent=item.description;
   const isGallery = item.kind === 'gallery';
   $('detailDialog').querySelector('.dialog-head strong').textContent = isGallery ? 'Gotowy witraż' : 'Szkło';
@@ -311,13 +356,14 @@ function showDetail(id) {
   $('changePhotoBtn').textContent = isGallery ? '▧ Zmień zdjęcie witrażu' : '▧ Zmień zdjęcie szkła';
   $('editBtn').textContent = isGallery ? '✎ Edytuj opis witrażu' : '✎ Edytuj opis szkła';
   $('detailDate').textContent='Dodano: '+new Date(item.createdAt || Date.now()).toLocaleDateString('pl-PL');
+  updateAccessUI();
   detailDialog.showModal();
 }
 $('detailBack').addEventListener('click',()=>detailDialog.close());
 $('editBtn').addEventListener('click',()=>{detailDialog.close();openEditor(activeId);});
 $('changePhotoBtn').addEventListener('click',()=>{detailDialog.close();openEditor(activeId);$('photoInput').click();});
 $('deleteBtn').addEventListener('click',async()=>{
-  if(!activeId)return;
+  if(!activeId || !cloudUser)return;
   if(confirm('Usunąć ten wpis ze zdjęciem? Tej operacji nie można cofnąć.')){
     const deleting = items.find(x=>x.id===activeId);
     if (cloudUser) {
@@ -374,6 +420,7 @@ $('cloudSyncBtn').addEventListener('click', async()=>{
 $('cloudLogoutBtn').addEventListener('click', async()=>{
   if (cloud) await cloud.auth.signOut(); cloudUser=null;
   cloudControls();
+  await loadPublicCatalog();
   cloudStatus('wylogowano; dane lokalne pozostały na urządzeniu.');
 });
 if (!cloud) cloudStatus('biblioteka niedostępna.');
@@ -386,6 +433,6 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 (async()=>{
-  try { db=await openDB();items=await allItems();render(); await restoreCloudSession(); }
+  try { db=await openDB();items=await allItems();updateAccessUI(); await restoreCloudSession(); }
   catch {toast('Nie udało się otworzyć lokalnej bazy danych.');}
 })();
