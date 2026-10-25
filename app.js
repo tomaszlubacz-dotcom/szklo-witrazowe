@@ -9,7 +9,7 @@ const SUPABASE_URL = 'https://fcromxczfjxvrptktzzb.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_-svgIsvfUfKwj1JBVX-k2Q_4Jl6AXUs';
 const ADMIN_EMAIL = 'tomaszlubacz@icloud.com';
 const CLOUD_BUCKET = 'witraz-zdjecia';
-let cloud = null, cloudUser = null, cloudBusy = false;
+let cloud = null, cloudUser = null, cloudBusy = false, lastCloudSync = 0;
 if (window.supabase?.createClient) cloud = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
 function cloudStatus(message) { const el = $('cloudStatus'); if (el) el.textContent = 'Supabase: ' + message; }
@@ -103,6 +103,42 @@ async function syncCloudToLocal() {
   cloudStatus(`gotowe: ${downloaded} pobrano, ${skipped} już aktualnych; razem ${rows?.length || 0} w chmurze.`);
 }
 
+function cloudControls() {
+  $('cloudLoginBtn').hidden = !!cloudUser;
+  $('cloudLogoutBtn').hidden = !cloudUser;
+  $('cloudSyncBtn').hidden = !cloudUser;
+}
+async function runCloudSync() {
+  if (!cloud || !cloudUser || cloudBusy || !db) return;
+  cloudBusy = true;
+  $('cloudSyncBtn').disabled = true;
+  try {
+    await syncLocalToCloud();
+    await syncCloudToLocal();
+    lastCloudSync = Date.now();
+    cloudStatus('połączono i zsynchronizowano.');
+  } catch (err) {
+    cloudStatus('błąd synchronizacji: ' + (err.message || 'nieznany'));
+    throw err;
+  } finally {
+    cloudBusy = false;
+    $('cloudSyncBtn').disabled = false;
+  }
+}
+async function restoreCloudSession() {
+  if (!cloud || !db) return;
+  try {
+    const {data: {session}, error} = await cloud.auth.getSession();
+    if (error || !session) { cloudControls(); return; }
+    const {data, error: userError} = await cloud.auth.getUser();
+    if (userError || data.user?.email?.toLowerCase() !== ADMIN_EMAIL) {
+      cloudUser = null; cloudControls(); return;
+    }
+    cloudUser = data.user;
+    cloudControls();
+    await runCloudSync();
+  } catch(err) { cloudStatus('błąd: ' + (err.message || 'nieznany')); }
+}
 async function cloudLoginAndSync() {
   if (!cloud) throw new Error('Nie załadowała się biblioteka Supabase. Odśwież stronę.');
   const email = $('cloudEmail').value.trim().toLowerCase(), password = $('cloudPassword').value;
@@ -114,11 +150,9 @@ async function cloudLoginAndSync() {
   cloudUser = data.user;
   if (cloudUser.email?.toLowerCase() !== ADMIN_EMAIL) { await cloud.auth.signOut(); cloudUser=null; throw new Error('To nie jest konto administratora.'); }
   $('cloudPassword').value='';
-  $('cloudLoginBtn').hidden=true; $('cloudLogoutBtn').hidden=false;
+  cloudControls();
   // Merge by stable local_id and updated_at; older local copies do not overwrite newer cloud records.
-  await syncLocalToCloud();
-  await syncCloudToLocal();
-  cloudStatus('połączono i zsynchronizowano.');
+  await runCloudSync();
 }
 
 const grid = $('grid'), empty = $('empty'), itemDialog = $('itemDialog'), detailDialog = $('detailDialog'), backupDialog = $('backupDialog');
@@ -327,19 +361,31 @@ $('importInput').addEventListener('change',async e=>{
 });
 
 $('cloudLoginBtn').addEventListener('click', async()=>{
-  if (cloudBusy) return; cloudBusy=true; $('cloudLoginBtn').disabled=true;
+  if (cloudBusy) return;
+  $('cloudLoginBtn').disabled=true;
   try { await cloudLoginAndSync(); toast('Synchronizacja zakończona.'); }
   catch(err) { cloudStatus('błąd: '+(err.message||'nieznany')); toast('Nie udało się zsynchronizować: '+(err.message||'sprawdź ustawienia Supabase')); }
-  finally { cloudBusy=false; $('cloudLoginBtn').disabled=false; }
+  finally { $('cloudLoginBtn').disabled=false; }
+});
+$('cloudSyncBtn').addEventListener('click', async()=>{
+  try { await runCloudSync(); toast('Synchronizacja zakończona.'); }
+  catch(err) { toast('Błąd synchronizacji: '+(err.message||'nieznany')); }
 });
 $('cloudLogoutBtn').addEventListener('click', async()=>{
   if (cloud) await cloud.auth.signOut(); cloudUser=null;
-  $('cloudLoginBtn').hidden=false; $('cloudLogoutBtn').hidden=true;
+  cloudControls();
   cloudStatus('wylogowano; dane lokalne pozostały na urządzeniu.');
 });
 if (!cloud) cloudStatus('biblioteka niedostępna.');
 
+// When returning to the app, check for changes on other devices.
+document.addEventListener('visibilitychange', ()=>{
+  if (!document.hidden && cloudUser && !cloudBusy && Date.now()-lastCloudSync > 30000) {
+    runCloudSync().catch(err=>cloudStatus('błąd synchronizacji: '+(err.message||'nieznany')));
+  }
+});
+
 (async()=>{
-  try { db=await openDB();items=await allItems();render(); }
-  catch {toast('Ta przeglądarka nie obsługuje lokalnego zapisu. Otwórz aplikację w Safari.');}
+  try { db=await openDB();items=await allItems();render(); await restoreCloudSession(); }
+  catch {toast('Nie udało się otworzyć lokalnej bazy danych.');}
 })();

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0866e9">
   <title>Szkło witrażowe</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <header class="topbar">
@@ -90,6 +90,7 @@
       <input id="cloudPassword" type="password" autocomplete="current-password" placeholder="Hasło" style="width:100%;margin-bottom:8px">
       <button id="cloudLoginBtn" class="primary" type="button">Zaloguj i synchronizuj</button>
       <button id="cloudLogoutBtn" class="secondary" type="button" hidden>Wyloguj</button>
+      <button id="cloudSyncBtn" class="primary" type="button" hidden>Synchronizuj teraz</button>
       <p class="hint">Hasło wpisujesz wyłącznie w tej aplikacji. Nie wysyłaj go w czacie.</p>
       <p>Wpisy są przechowywane lokalnie w tej przeglądarce na tym urządzeniu. Wyeksportuj kopię, aby zabezpieczyć zdjęcia i opisy.</p>
       <button id="exportBtn" class="primary">Eksportuj kopię</button>
@@ -101,7 +102,7 @@
   </dialog>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=6"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
