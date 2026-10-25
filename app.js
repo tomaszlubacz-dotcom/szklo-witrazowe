@@ -3,6 +3,124 @@ const STORE = 'items';
 let db, items = [], editingId = null, activeId = null, pendingPhoto = null, activeView = 'glass';
 
 const $ = id => document.getElementById(id);
+
+// Supabase cloud sync. Publishable/anon key is intended for browser use; never put service_role here.
+const SUPABASE_URL = 'https://fcromxczfjxvrptktzzb.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_-svgIsvfUfKwj1JBVX-k2Q_4Jl6AXUs';
+const ADMIN_EMAIL = 'tomaszlubacz@icloud.com';
+const CLOUD_BUCKET = 'witraz-zdjecia';
+let cloud = null, cloudUser = null, cloudBusy = false;
+if (window.supabase?.createClient) cloud = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+function cloudStatus(message) { const el = $('cloudStatus'); if (el) el.textContent = 'Supabase: ' + message; }
+// Timestamps in older backups can be numbers or numeric strings (milliseconds).
+function timestampMs(value) {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value).trim();
+  if (/^\d{10,13}$/.test(text)) return Number(text);
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function dataUrlToBlob(dataUrl) {
+  const parts = dataUrl.split(',');
+  const mime = (parts[0].match(/data:([^;]+)/) || [,'image/jpeg'])[1];
+  const binary = atob(parts[1]); const bytes = new Uint8Array(binary.length);
+  for (let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+  return new Blob([bytes], {type:mime});
+}
+function blobToDataUrl(blob) {
+  return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});
+}
+async function uploadCloudItem(item) {
+  if (!cloud || !cloudUser) return;
+  const path = `${item.id}.jpg`;
+  const blob = dataUrlToBlob(item.photo);
+  const up = await cloud.storage.from(CLOUD_BUCKET).upload(path, blob, {contentType: blob.type || 'image/jpeg', upsert:true});
+  if (up.error) throw up.error;
+  const {data:pub} = cloud.storage.from(CLOUD_BUCKET).getPublicUrl(path);
+  const stamp = timestampMs(item.updatedAt) || timestampMs(item.createdAt) || Date.now();
+  const createdStamp = timestampMs(item.createdAt) || stamp;
+  const row = {
+    local_id: String(item.id),
+    kind: item.kind === 'gallery' ? 'gallery' : 'glass',
+    title: firstLine(item.description).slice(0,200) || 'Bez tytułu',
+    description: item.description || '',
+    image_url: pub.publicUrl,
+    created_at: new Date(createdStamp).toISOString(),
+    updated_at: new Date(stamp).toISOString()
+  };
+  const saved = await cloud.from('witraz_items').upsert(row, {onConflict:'local_id'});
+  if (saved.error) throw saved.error;
+}
+async function syncLocalToCloud() {
+  if (!cloudUser) throw new Error('Najpierw zaloguj administratora.');
+  const local = await allItems();
+  const {data: cloudRows, error} = await cloud.from('witraz_items').select('local_id,updated_at');
+  if (error) throw error;
+  const cloudMap = new Map((cloudRows || []).filter(x=>x.local_id).map(x=>[String(x.local_id), x]));
+  for (let i=0;i<local.length;i++) {
+    const item = local[i];
+    const remote = cloudMap.get(String(item.id));
+    const localStamp = timestampMs(item.updatedAt) || timestampMs(item.createdAt);
+    const remoteStamp = timestampMs(remote?.updated_at);
+    // Never upload an older local copy over a newer cloud copy.
+    if (remote && remoteStamp >= localStamp) continue;
+    cloudStatus(`wysyłanie nowszych wpisów ${i+1}/${local.length}…`);
+    await uploadCloudItem(item);
+  }
+}
+async function syncCloudToLocal() {
+  if (!cloudUser) return;
+  cloudStatus('pobieranie wpisów…');
+  const {data:rows,error} = await cloud.from('witraz_items').select('local_id,kind,title,description,image_url,created_at,updated_at').not('local_id','is',null).order('created_at',{ascending:false});
+  if (error) throw error;
+  const local = await allItems();
+  const localMap = new Map(local.map(x=>[String(x.id),x]));
+  let downloaded = 0, skipped = 0;
+  for (const row of (rows || [])) {
+    if (!row.local_id || !row.image_url) continue;
+    const old = localMap.get(String(row.local_id));
+    const remoteStamp = timestampMs(row.updated_at) || timestampMs(row.created_at);
+    const localStamp = timestampMs(old?.updatedAt) || timestampMs(old?.createdAt);
+    // Existing local copy is already current (or newer); do not re-download its large photo.
+    if (old && localStamp >= remoteStamp) { skipped++; continue; }
+    cloudStatus(`pobieranie zdjęć ${downloaded+1}/${rows.length}…`);
+    const resp = await fetch(row.image_url, {cache:'no-store'});
+    if (!resp.ok) throw new Error('Nie udało się pobrać zdjęcia z magazynu.');
+    const photo = await blobToDataUrl(await resp.blob());
+    const item = {
+      id: String(row.local_id), kind: row.kind === 'gallery' ? 'gallery' : 'glass',
+      description: row.description || row.title || '', photo,
+      createdAt: timestampMs(row.created_at) || (timestampMs(old?.createdAt) || Date.now()),
+      updatedAt: remoteStamp || Date.now()
+    };
+    await putItem(item);
+    localMap.set(String(item.id), item);
+    downloaded++;
+  }
+  items = await allItems(); render();
+  cloudStatus(`gotowe: ${downloaded} pobrano, ${skipped} już aktualnych; razem ${rows?.length || 0} w chmurze.`);
+}
+
+async function cloudLoginAndSync() {
+  if (!cloud) throw new Error('Nie załadowała się biblioteka Supabase. Odśwież stronę.');
+  const email = $('cloudEmail').value.trim().toLowerCase(), password = $('cloudPassword').value;
+  if (email !== ADMIN_EMAIL) throw new Error('Użyj konta administratora aplikacji.');
+  if (!password) throw new Error('Wpisz hasło.');
+  cloudStatus('logowanie…');
+  const {data,error} = await cloud.auth.signInWithPassword({email,password});
+  if (error) throw error;
+  cloudUser = data.user;
+  if (cloudUser.email?.toLowerCase() !== ADMIN_EMAIL) { await cloud.auth.signOut(); cloudUser=null; throw new Error('To nie jest konto administratora.'); }
+  $('cloudPassword').value='';
+  $('cloudLoginBtn').hidden=true; $('cloudLogoutBtn').hidden=false;
+  // Merge by stable local_id and updated_at; older local copies do not overwrite newer cloud records.
+  await syncLocalToCloud();
+  await syncCloudToLocal();
+  cloudStatus('połączono i zsynchronizowano.');
+}
+
 const grid = $('grid'), empty = $('empty'), itemDialog = $('itemDialog'), detailDialog = $('detailDialog'), backupDialog = $('backupDialog');
 
 function openDB() {
@@ -139,7 +257,7 @@ $('itemForm').addEventListener('submit',async e=>{
   const old=editingId?items.find(x=>x.id===editingId):null;
   const item={id:editingId||crypto.randomUUID(),kind:old?.kind || activeView,description,photo:pendingPhoto,createdAt:old?.createdAt||Date.now(),updatedAt:Date.now()};
   try {
-    await putItem(item); items=await allItems(); itemDialog.close(); render();
+    await putItem(item); items=await allItems(); if (cloudUser) { try { await uploadCloudItem(item); } catch(err) { toast('Zapisano lokalnie; błąd synchronizacji: '+(err.message||'sprawdź połączenie')); } } itemDialog.close(); render();
     if(activeId===item.id) showDetail(item.id);
     toast(old?'Zapisano zmiany.':(item.kind === 'gallery' ? 'Dodano witraż do galerii.' : 'Dodano szkło.'));
   } catch {toast('Nie udało się zapisać. Sprawdź wolne miejsce na urządzeniu.');}
@@ -167,6 +285,12 @@ $('changePhotoBtn').addEventListener('click',()=>{detailDialog.close();openEdito
 $('deleteBtn').addEventListener('click',async()=>{
   if(!activeId)return;
   if(confirm('Usunąć ten wpis ze zdjęciem? Tej operacji nie można cofnąć.')){
+    const deleting = items.find(x=>x.id===activeId);
+    if (cloudUser) {
+      const {error} = await cloud.from('witraz_items').delete().eq('local_id', String(activeId));
+      if (error) { toast('Nie usunięto z Supabase: '+error.message); return; }
+      await cloud.storage.from(CLOUD_BUCKET).remove([`${activeId}.jpg`]);
+    }
     await deleteItem(activeId);items=await allItems();detailDialog.close();render();toast('Usunięto wpis.');
   }
 });
@@ -185,7 +309,7 @@ $('importInput').addEventListener('change',async e=>{
     if(!data || !Array.isArray(data.items) || !data.items.every(x => x && x.id && typeof x.description === 'string' && typeof x.photo === 'string' && x.photo.startsWith('data:image/'))) {
       throw new Error('Nieprawidłowy format kopii.');
     }
-    const normalized = data.items.map(x=>({...x,kind:x.kind==='gallery'?'gallery':'glass',createdAt:x.createdAt || Date.now(),updatedAt:x.updatedAt || x.createdAt || Date.now()}));
+    const normalized = data.items.map(x=>({...x,kind:x.kind==='gallery'?'gallery':'glass',createdAt:timestampMs(x.createdAt) || Date.now(),updatedAt:timestampMs(x.updatedAt) || timestampMs(x.createdAt) || Date.now()}));
     if(!confirm('Import zastąpi obecną kolekcję. Najpierw wyeksportuj kopię, jeśli chcesz zachować obecne wpisy. Kontynuować?'))return;
     await new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite');
@@ -201,6 +325,20 @@ $('importInput').addEventListener('change',async e=>{
     toast(err?.message === 'Nieprawidłowy format kopii.' ? err.message : 'Nie udało się zaimportować kopii. Obecna kolekcja powinna pozostać bez zmian.');
   } finally {e.target.value='';}
 });
+
+$('cloudLoginBtn').addEventListener('click', async()=>{
+  if (cloudBusy) return; cloudBusy=true; $('cloudLoginBtn').disabled=true;
+  try { await cloudLoginAndSync(); toast('Synchronizacja zakończona.'); }
+  catch(err) { cloudStatus('błąd: '+(err.message||'nieznany')); toast('Nie udało się zsynchronizować: '+(err.message||'sprawdź ustawienia Supabase')); }
+  finally { cloudBusy=false; $('cloudLoginBtn').disabled=false; }
+});
+$('cloudLogoutBtn').addEventListener('click', async()=>{
+  if (cloud) await cloud.auth.signOut(); cloudUser=null;
+  $('cloudLoginBtn').hidden=false; $('cloudLogoutBtn').hidden=true;
+  cloudStatus('wylogowano; dane lokalne pozostały na urządzeniu.');
+});
+if (!cloud) cloudStatus('biblioteka niedostępna.');
+
 (async()=>{
   try { db=await openDB();items=await allItems();render(); }
   catch {toast('Ta przeglądarka nie obsługuje lokalnego zapisu. Otwórz aplikację w Safari.');}

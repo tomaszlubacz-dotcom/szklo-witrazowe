@@ -83,6 +83,14 @@
       <span></span>
     </div>
     <div class="backup-body">
+      <p id="cloudStatus">Synchronizacja Supabase: niepołączono.</p>
+      <label class="field-label" for="cloudEmail">E-mail administratora</label>
+      <input id="cloudEmail" type="email" autocomplete="username" placeholder="E-mail" style="width:100%;margin-bottom:8px">
+      <label class="field-label" for="cloudPassword">Hasło Supabase</label>
+      <input id="cloudPassword" type="password" autocomplete="current-password" placeholder="Hasło" style="width:100%;margin-bottom:8px">
+      <button id="cloudLoginBtn" class="primary" type="button">Zaloguj i synchronizuj</button>
+      <button id="cloudLogoutBtn" class="secondary" type="button" hidden>Wyloguj</button>
+      <p class="hint">Hasło wpisujesz wyłącznie w tej aplikacji. Nie wysyłaj go w czacie.</p>
       <p>Wpisy są przechowywane lokalnie w tej przeglądarce na tym urządzeniu. Wyeksportuj kopię, aby zabezpieczyć zdjęcia i opisy.</p>
       <button id="exportBtn" class="primary">Eksportuj kopię</button>
       <label class="secondary import-label">Importuj kopię JSON
@@ -92,6 +100,7 @@
     </div>
   </dialog>
   <div id="toast" role="status" aria-live="polite"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
