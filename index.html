@@ -14,6 +14,11 @@
     <button id="backupBtn" class="icon-btn" aria-label="Kopia zapasowa" title="Kopia zapasowa">⚙</button>
   </header>
 
+  <nav class="tabs" aria-label="Sekcje aplikacji">
+    <button type="button" class="tab active" data-view="glass">Katalog szkła</button>
+    <button type="button" class="tab" data-view="gallery">Gotowe witraże</button>
+  </nav>
+
   <main>
     <label class="search-wrap">
       <span aria-hidden="true">⌕</span>
@@ -21,8 +26,8 @@
     </label>
     <div id="empty" class="empty">
       <div class="empty-icon">◇</div>
-      <h2>Twoja kolekcja szkła</h2>
-      <p>Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.</p>
+      <h2 id="emptyTitle">Twoja kolekcja szkła</h2>
+      <p id="emptyText">Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.</p>
       <button class="primary" id="emptyAdd">＋ Dodaj szkło</button>
     </div>
     <section id="grid" class="grid" aria-label="Katalog szkła"></section>
@@ -46,7 +51,7 @@
             <span>Zrób zdjęcie lub wybierz z galerii</span>
           </div>
         </label>
-        <input id="photoInput" type="file" accept="image/*" capture="environment" hidden>
+        <input id="photoInput" type="file" accept="image/*" hidden>
         <label class="field-label" for="description">Opis</label>
         <textarea id="description" rows="5" placeholder="Wpisz opis szkła…" required maxlength="2000"></textarea>
         <p class="hint">Możesz wpisać nazwę, kolor, fakturę lub inne informacje.</p>

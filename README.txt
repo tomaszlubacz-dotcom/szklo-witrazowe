@@ -2,7 +2,8 @@ SZKŁO WITRAŻOWE — wersja demonstracyjna PWA
 ============================================
 
 Zawartość:
-- dodawanie zdjęcia z aparatu lub galerii
+- osobny katalog szkła oraz galeria gotowych witraży
+- dodawanie zdjęcia z aparatu lub biblioteki zdjęć iPhone’a (wybór w oknie systemowym)
 - opis tekstowy
 - edycja opisu i zdjęcia
 - wyszukiwanie w opisach

@@ -1,6 +1,6 @@
 const DB_NAME = 'szklo-witrazowe-db';
 const STORE = 'items';
-let db, items = [], editingId = null, activeId = null, pendingPhoto = null;
+let db, items = [], editingId = null, activeId = null, pendingPhoto = null, activeView = 'glass';
 
 const $ = id => document.getElementById(id);
 const grid = $('grid'), empty = $('empty'), itemDialog = $('itemDialog'), detailDialog = $('detailDialog'), backupDialog = $('backupDialog');
@@ -42,18 +42,18 @@ function toast(message) {
 function shortText(text) { return text.length > 95 ? text.slice(0,92)+'…' : text; }
 function render() {
   const q = $('search').value.trim().toLocaleLowerCase('pl');
-  const filtered = items.filter(x => x.description.toLocaleLowerCase('pl').includes(q));
+  const filtered = items.filter(x => (x.kind || 'glass') === activeView && x.description.toLocaleLowerCase('pl').includes(q));
   grid.replaceChildren();
   empty.hidden = filtered.length > 0;
   grid.hidden = filtered.length === 0;
-  if (items.length && filtered.length === 0) {
-    empty.hidden = false;
-    empty.querySelector('h2').textContent = 'Brak wyników';
-    empty.querySelector('p').textContent = 'Spróbuj wpisać inne słowo.';
-    $('emptyAdd').hidden = true;
+  const hasItemsInView = items.some(x => (x.kind || 'glass') === activeView);
+  if (filtered.length === 0 && hasItemsInView && q) {
+    empty.hidden = false; $('emptyTitle').textContent = 'Brak wyników';
+    $('emptyText').textContent = 'Spróbuj wpisać inne słowo.'; $('emptyAdd').hidden = true;
   } else {
-    empty.querySelector('h2').textContent = 'Twoja kolekcja szkła';
-    empty.querySelector('p').textContent = 'Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.';
+    $('emptyTitle').textContent = activeView === 'gallery' ? 'Galeria gotowych witraży' : 'Twoja kolekcja szkła';
+    $('emptyText').textContent = activeView === 'gallery' ? 'Dodaj zdjęcia ukończonych witraży, aby stworzyć własną galerię.' : 'Dodaj pierwsze zdjęcie, aby rozpocząć katalogowanie.';
+    $('emptyAdd').textContent = activeView === 'gallery' ? '＋ Dodaj witraż' : '＋ Dodaj szkło';
     $('emptyAdd').hidden = false;
   }
   filtered.forEach(item => {
@@ -80,7 +80,10 @@ function openEditor(id=null) {
   editingId=id; pendingPhoto=null;
   $('itemForm').reset(); resetPhotoPreview();
   const item=id ? items.find(x=>x.id===id) : null;
-  $('dialogTitle').textContent=item?'Edytuj szkło':'Dodaj szkło';
+  $('dialogTitle').textContent=item ? ((item.kind === 'gallery') ? 'Edytuj witraż' : 'Edytuj szkło') : (activeView === 'gallery' ? 'Dodaj gotowy witraż' : 'Dodaj szkło');
+  $('photoPlaceholder').querySelector('strong').textContent = 'Dodaj zdjęcie';
+  $('photoPlaceholder').querySelector('span:last-child').textContent = 'Zrób zdjęcie lub wybierz z galerii';
+  $('description').placeholder = activeView === 'gallery' ? 'Nazwa witrażu, miejsce, data lub inne informacje…' : 'Wpisz opis szkła…';
   if(item){$('description').value=item.description;pendingPhoto=item.photo;setPhotoPreview(item.photo);}
   itemDialog.showModal();
 }
@@ -108,20 +111,22 @@ $('itemForm').addEventListener('submit',async e=>{
   if(!description){toast('Wpisz opis szkła.');return;}
   if(!pendingPhoto){toast('Dodaj zdjęcie szkła.');return;}
   const old=editingId?items.find(x=>x.id===editingId):null;
-  const item={id:editingId||crypto.randomUUID(),description,photo:pendingPhoto,createdAt:old?.createdAt||Date.now(),updatedAt:Date.now()};
+  const item={id:editingId||crypto.randomUUID(),kind:old?.kind || activeView,description,photo:pendingPhoto,createdAt:old?.createdAt||Date.now(),updatedAt:Date.now()};
   try {
     await putItem(item); items=await allItems(); itemDialog.close(); render();
     if(activeId===item.id) showDetail(item.id);
-    toast(old?'Zapisano zmiany.':'Dodano szkło.');
+    toast(old?'Zapisano zmiany.':(item.kind === 'gallery' ? 'Dodano witraż do galerii.' : 'Dodano szkło.'));
   } catch {toast('Nie udało się zapisać. Sprawdź wolne miejsce na urządzeniu.');}
 });
 $('cancelBtn').addEventListener('click',()=>itemDialog.close());
 $('addBtn').addEventListener('click',()=>openEditor());
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{activeView=btn.dataset.view;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===btn));$('search').value='';$('addBtn').setAttribute('aria-label',activeView==='gallery'?'Dodaj witraż':'Dodaj szkło');render();}));
 $('emptyAdd').addEventListener('click',()=>openEditor());
 $('search').addEventListener('input',render);
 function showDetail(id) {
   const item=items.find(x=>x.id===id); if(!item)return;
   activeId=id; $('detailPhoto').src=item.photo; $('detailDescription').textContent=item.description;
+  $('detailDialog').querySelector('.dialog-head strong').textContent = item.kind === 'gallery' ? 'Gotowy witraż' : 'Szkło';
   $('detailDate').textContent='Dodano: '+new Date(item.createdAt).toLocaleDateString('pl-PL');
   detailDialog.showModal();
 }
@@ -147,6 +152,7 @@ $('importInput').addEventListener('change',async e=>{
   try {
     const data=JSON.parse(await file.text());
     if(!Array.isArray(data.items)||!data.items.every(x=>x.id&&x.description&&x.photo))throw new Error();
+    data.items = data.items.map(x=>({...x,kind:x.kind==='gallery'?'gallery':'glass'}));
     if(!confirm('Import zastąpi obecną kolekcję. Najpierw wyeksportuj kopię, jeśli chcesz zachować obecne wpisy. Kontynuować?'))return;
     const tx=db.transaction(STORE,'readwrite'), store=tx.objectStore(STORE);store.clear();data.items.forEach(x=>store.put(x));
     tx.oncomplete=async()=>{items=await allItems();render();backupDialog.close();toast('Zaimportowano kopię.');};
